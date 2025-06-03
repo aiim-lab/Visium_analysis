@@ -1062,4 +1062,166 @@ semla::MapFeatures(
   colors = viridis::inferno(length(unique(se$seurat_clusters)))
 )
 
+#Quantify Spot Counts per Cluster per Sample:
+table(se$sample_id, se$seurat_clusters)
+#       0    1    2    3    4
+#ctl 1114  222   37   24   20
+#myo   97  504  233  235   69
 
+#Manually Remove Off-Tissue Clusters (i want to remove cluster 2 from myo , 2 and 4 from ctl):
+# Ensure correct identity is set
+Idents(se) <- "seurat_clusters"
+
+# Create a metadata column for clarity if not already present
+if (!"sample_id" %in% colnames(se@meta.data)) {
+  stop("Missing 'sample_id' column in metadata.")
+}
+
+# Flag clusters to exclude (specific to each sample)
+se$exclude <- with(se@meta.data,
+                   (sample_id == "myo" & seurat_clusters == "2") |
+                     (sample_id == "ctl" & seurat_clusters %in% c("2", "4")))
+
+# Use semla's safer method to subset while keeping spatial image alignment
+se_clean <- semla::SubsetSTData(se, expression = !se$exclude)
+
+
+se_clean$seurat_clusters_numeric <- as.numeric(as.character(se_clean$seurat_clusters))
+
+semla::MapFeatures(
+  object = se_clean,
+  features = "seurat_clusters_numeric",
+  image_use = "raw",  # or "masked"
+  pt_size = 2,
+  override_plot_dims = TRUE,
+  colors = viridis::inferno(length(unique(se_clean$seurat_clusters)))
+)
+
+table(se_clean$sample_id, se_clean$seurat_clusters)
+#       0    1    3    4
+#ctl 1114  222   24    0
+#myo   97  504  235   69
+
+
+#subset myo sample
+se_myo <- semla::SubsetSTData(se_clean, expression = sample_id == "myo")
+
+Idents(se_myo) <- "seurat_clusters"
+
+myo_markers <- FindAllMarkers(
+  se_myo,
+  assay = "Spatial",
+  only.pos = TRUE,
+  logfc.threshold = 0.25,
+  min.pct = 0.1,
+  return.thresh = 0.05
+)
+
+# Get top gene from clusters
+
+
+# Top 30 genes per cluster
+top_genes_per_cluster <- myo_markers %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 30)
+
+top_genes_per_cluster
+
+#isloate cluster 3 (looks immune related)
+immune_genes_cluster3 <- myo_markers %>%
+  filter(cluster == "3") %>%
+  arrange(desc(avg_log2FC)) %>%
+  slice_head(n = 30)
+
+
+#manually checking for known cytokines in myo sample:
+cytokine_genes <- c("TNF", "IL1B", "IL6", "CCL2", "CXCL8", "CXCL10", "IFNG", "IL10", "TGFB1")
+
+MapFeatures(
+  object = se_myo,
+  features = cytokine_genes,
+  image_use = "raw",
+  pt_size = 2,
+  override_plot_dims = TRUE
+)
+
+#To catch low-level but significant cytokine expression:
+markers_cluster3 <- FindMarkers(se_myo, ident.1 = "3", ident.2 = NULL)
+markers_cluster3 %>% filter(gene %in% cytokine_genes)
+
+#Cluster 3 is immunologically distinct from other clusters in the myo sample 
+#and likely represents an inflamed region with active immune responses, 
+#supported by the overexpression of genes like S100A9, CD36, and CFLAR.
+
+###checking across sample (myo vs ctl)
+
+# Subset se_clean by sample
+se_myo <- subset(se_clean, subset = sample_id == "myo")
+se_ctl <- subset(se_clean, subset = sample_id == "ctl")
+
+# Set identity class for both
+Idents(se_myo) <- "seurat_clusters"
+Idents(se_ctl) <- "seurat_clusters"
+
+#Extract cluster 3 from both
+# Subset only cluster 3 from both samples
+c3_myo <- subset(se_myo, idents = "3")
+c3_ctl <- subset(se_ctl, idents = "3")
+
+# Compare markers between C3 in myo and ctl
+# Option A: Just compare mean expression of top immune genes
+top_immune_genes <- c("S100A9", "HSPB6", "CD36", "TMSB4X", "CFLAR", "S100A6")  # adjust based on your prior list
+
+# Average expression in each C3 subset
+avg_myo <- AverageExpression(c3_myo, features = top_immune_genes, assays = "Spatial")$Spatial
+avg_ctl <- AverageExpression(c3_ctl, features = top_immune_genes, assays = "Spatial")$Spatial
+
+# Combine for visualization
+comparison_df <- data.frame(
+  Gene = rownames(avg_myo),
+  Myo = avg_myo[, 1],
+  Ctl = avg_ctl[, 1]
+)
+
+# Visualize as barplot
+library(ggplot2)
+comparison_df_long <- tidyr::pivot_longer(comparison_df, cols = c("Myo", "Ctl"), names_to = "Sample", values_to = "Expression")
+
+ggplot(comparison_df_long, aes(x = Gene, y = Expression, fill = Sample)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Cluster 3: Myo vs Ctl", y = "Avg. Expression") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+#Plot clearly demonstrates that Cluster 3 in the myo sample shows enhanced 
+#immune-related gene expression compared to the same cluster in ctl
+
+
+
+#Spatially visualize key DE genes (e.g., S100A9, TMSB4X, HSPB6)
+se_myo <- semla::SubsetSTData(se_clean, expression = sample_id == "myo")
+
+immune_genes <- c("S100A9", "TMSB4X", "HSPB6")
+
+plot_list <- list()
+
+# Generate each plot and store
+for (gene in immune_genes) {
+  p <- MapFeatures(
+    object = se_myo,
+    features = gene,
+    image_use = "raw",
+    pt_size = 2,
+    override_plot_dims = TRUE
+  ) + ggtitle(paste("Spatial Expression of", gene))
+  
+  plot_list[[gene]] <- p
+}
+
+# Combine using patchwork: side-by-side
+combined_plot <- plot_list[[1]] + plot_list[[2]] + plot_list[[3]] +
+  plot_layout(ncol = 3)
+
+# Display
+print(combined_plot)

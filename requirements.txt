@@ -1,0 +1,10 @@
+viridis
+viridisLite
+semla
+future
+dplyr
+patchwork
+ggplot2
+Seurat
+SeuratObject
+sp

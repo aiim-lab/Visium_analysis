@@ -55,6 +55,12 @@ saveRDS(se_myo, "data/se_myo_annotated.rds")
 saveRDS(se_myo_core, "data/se_myo_core.rds")
 saveRDS(se_ctl, "data/se_ctl_annotated.rds")
 
+
+# Load annotated Seurat objects from disk
+se_myo <- readRDS("data/se_myo_annotated.rds")
+se_ctl <- readRDS("data/se_ctl_annotated.rds")
+
+
 # Inspect annotations (ensure lasso tool saved to 'selected_region')
 table(se_myo$annotation_myo)
 table(se_ctl$annotation_ctl)
@@ -71,34 +77,29 @@ se_clean2 <- merge(
   add.cell.ids = c("ctl", "myo")
 )
 se_clean3 <- NormalizeData(se_clean2)
-se_clean3 <- FindVariableFeatures(se_clean3)
+#se_clean3 <- FindVariableFeatures(se_clean3) #this was being used before
+
+#making FindVariableFeatures less stringent and using some other strategy inside
+se_clean3 <- FindVariableFeatures(
+  se_clean3,
+  selection.method = "vst",  # default method, reliable
+  nfeatures = 4000           # default is 2000, increase as needed
+)
+
+se_clean3 <- FindVariableFeatures(
+  se_clean3,
+  selection.method = "dispersion",  # useful for sparse/high-dispersion markers
+  mean.cutoff = c(0.05, 8),
+  dispersion.cutoff = c(0.5, Inf)
+)
+
+
+
+
+
 se_clean3 <- ScaleData(se_clean3, split.by = "sample_id")
 se_clean4 <- JoinLayers(se_clean3)
 
-# Step 7: Standard Seurat processing
-# Normalize and scale MYO sample
-# Normalize and scale each sample independently
-#se_myo_filtered <- NormalizeData(se_myo_filtered)
-#se_myo_filtered <- FindVariableFeatures(se_myo_filtered)
-#se_myo_filtered <- ScaleData(se_myo_filtered)
-
-#se_ctl_filtered <- NormalizeData(se_ctl_filtered)
-#se_ctl_filtered <- FindVariableFeatures(se_ctl_filtered)
-#se_ctl_filtered <- ScaleData(se_ctl_filtered)
-
-# Merge preprocessed samples
-#se_clean <- merge(
-#  x = se_ctl_filtered,
-#  y = se_myo_filtered,
-#  add.cell.ids = c("ctl", "myo")
-#)
-
-# Set assay
-#DefaultAssay(se_clean) <- "Spatial"
-
-# Safest – re-run ScaleData after merge
-# This ensures `scale.data` has proper cell names post-merge
-#se_clean <- ScaleData(se_clean)
 
 # Now continue as usual
 se_clean <- RunPCA(se_clean4)
@@ -132,7 +133,7 @@ top_markers_per_cluster <- myo_markers %>%
 
 write.csv(top_markers_per_cluster, file = "top_myo_markers_per_cluster.csv", row.names = FALSE)
 
-#Subset myo from merged object
+
 # Use Seurat's subset() instead
 Idents(se_clean) <- "seurat_clusters"
 
